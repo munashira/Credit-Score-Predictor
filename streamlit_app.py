@@ -108,4 +108,4 @@ def get_tip(feature, value):
         "Debt_to_Income_Ratio": "Reduce debt or increase income to lower this ratio."
     }
     return tips.get(feature, "General financial discipline can help.")
-synthetic_cibil_scores.csv
+df = pd.read_csv("synthetic_cibil_scores.csv")
