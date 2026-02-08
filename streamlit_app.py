@@ -1,110 +1,111 @@
 import streamlit as st
-import pandas as pd
+import matplotlib.pyplot as plt
+import shap
+from model import train_model, predict_cibil
+
+st.title("CIBIL Score Prediction")
+st.write("Enter the following values to predict your CIBIL score:")
+
+# Load model and SHAP explainer once using Streamlit caching
+model, explainer = train_model()
+
+# Input form
+ph = st.slider("Payment History (0–100)%", 0, 100, 50)
+cu = st.slider("Credit Utilization (0.0–1.0)", 0.0, 1.0, 0.5)
+ca = st.slider("Credit Age (years)", 0, 50, 10)
+na = st.slider("Number of Accounts", 1, 100, 10)
+hi = st.slider("Hard Inquiries", 0, 10, 3)
+dr = st.slider("Debt-to-Income Ratio (0.0–1.0)", 0.0, 1.0, 0.3)
+
+# Predict button
+if st.button("Predict"):
+    score, shap_values, suggestions = predict_cibil(model, explainer, [ph, cu, ca, na, hi, dr])
+
+    st.write(f"📈 **Predicted CIBIL Score**: {round(score)}")
+
+    st.write("### 🔍 Explanation of the Prediction")
+    fig, ax = plt.subplots(figsize=(8, 6))
+    shap.plots.waterfall(shap_values[0], show=False)
+    st.pyplot(fig)
+
+    if suggestions:
+        st.write("### 💡 Tips to Improve Your Score:")
+        for tip in suggestions:
+            st.markdown(tip)
+    else:
+        st.success("Great job! All factors are contributing positively or neutrally to your score.")
+        import pandas as pd
 import numpy as np
-
-
-# ------------------ PAGE CONFIG ------------------
-st.set_page_config(
-    page_title="Credit Score Predictor",
-    page_icon="💳",
-    layout="centered"
+import shap
+import xgboost as xgb
+import streamlit as st
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    mean_squared_error,
+    r2_score,
+    mean_absolute_error,
+    mean_squared_log_error,
+    explained_variance_score
 )
 
-# ------------------ CUSTOM CSS ------------------
-st.markdown("""
-    <style>
-        .main {
-            background-color: #0e1117;
-            color: white;
-        }
-        h1, h2, h3 {
-            color: #00ffcc;
-            text-align: center;
-        }
-        .stButton button {
-            background: linear-gradient(90deg, #00ffcc, #0077ff);
-            color: black;
-            font-weight: bold;
-            border-radius: 12px;
-            height: 50px;
-            width: 100%;
-            font-size: 18px;
-        }
-        .stButton button:hover {
-            background: linear-gradient(90deg, #0077ff, #00ffcc);
-            color: white;
-        }
-        .result-box {
-            background-color: #1f2937;
-            padding: 20px;
-            border-radius: 15px;
-            border: 2px solid #00ffcc;
-            text-align: center;
-            font-size: 22px;
-            font-weight: bold;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-# ------------------ TITLE ------------------
-st.markdown("<h1>💳 Credit Score Predictor</h1>", unsafe_allow_html=True)
-st.write("### 📌 Enter the details below to predict your Credit Score")
-
-st.markdown("---")
-
-# ------------------ LOAD MODEL ------------------
+# Cache model and explainer to avoid retraining every time
 @st.cache_resource
-def load_model():
-    model = joblib.load("model.pkl")   # Make sure model.pkl exists in GitHub
-    return model
+def train_model():
+    df = pd.read_csv("synthetic_cibil_scores.csv")
 
-model = load_model()
+    # Define features and target
+    X = df[['Payment_History', 'Credit_Utilization', 'Credit_Age',
+            'Number_of_Accounts', 'Hard_Inquiries', 'Debt_to_Income_Ratio']]
+    y = df['CIBIL_Score']
 
-# ------------------ INPUT FORM ------------------
-st.subheader("📊 User Financial Details")
+    # Handle missing values
+    X.fillna(X.mean(), inplace=True)
 
-col1, col2 = st.columns(2)
+    # Split the data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
 
-with col1:
-    age = st.number_input("👤 Age", min_value=18, max_value=100, value=25)
-    income = st.number_input("💰 Annual Income (in ₹)", min_value=10000, max_value=10000000, value=500000)
-    loan_amount = st.number_input("🏦 Loan Amount (in ₹)", min_value=1000, max_value=10000000, value=200000)
+    # Train the XGBoost Regressor
+    model = xgb.XGBRegressor(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
 
-with col2:
-    credit_utilization = st.slider("📉 Credit Utilization (%)", 0, 100, 30)
-    late_payments = st.number_input("⏳ Late Payments (Count)", min_value=0, max_value=50, value=2)
-    credit_history = st.number_input("📅 Credit History (Years)", min_value=0, max_value=40, value=5)
+    # Create SHAP explainer
+    explainer = shap.Explainer(model)
+    return model, explainer
 
-st.markdown("---")
+# Predict and explain
+def predict_cibil(model, explainer, values):
+    cols = ["Payment_History", "Credit_Utilization", "Credit_Age",
+            "Number_of_Accounts", "Hard_Inquiries", "Debt_to_Income_Ratio"]
+    df_input = pd.DataFrame([dict(zip(cols, values))])
+    score = model.predict(df_input)[0]
+    shap_values = explainer(df_input)
+    suggestions = get_suggestions(df_input, shap_values)
+    return score, shap_values, suggestions
 
-# ------------------ PREDICTION BUTTON ------------------
-if st.button("🔮 Predict Credit Score"):
-    try:
-        # Convert inputs to model format
-        input_data = np.array([[age, income, loan_amount, credit_utilization, late_payments, credit_history]])
+# Suggest improvements for negative SHAP values
+def get_suggestions(df_input, shap_values):
+    feature_names = df_input.columns.tolist()
+    shap_val = shap_values.values[0]
+    suggestions = []
 
-        prediction = model.predict(input_data)[0]
+    for i, val in enumerate(shap_val):
+        if val < 0:
+            feature = feature_names[i]
+            tip = get_tip(feature, df_input.iloc[0][feature])
+            suggestions.append(f"🔻 **{feature}** is negatively affecting your score. Tip: {tip}")
 
-        # Category based on score
-        if prediction >= 750:
-            status = "🟢 Excellent"
-        elif prediction >= 650:
-            status = "🟡 Good"
-        elif prediction >= 550:
-            status = "🟠 Average"
-        else:
-            status = "🔴 Poor"
+    return suggestions
 
-        st.markdown(f"""
-            <div class="result-box">
-                📌 Predicted Credit Score: <span style="color:#00ffcc;">{prediction:.2f}</span> <br><br>
-                ⭐ Credit Category: <span style="color:#ffd700;">{status}</span>
-            </div>
-        """, unsafe_allow_html=True)
-
-    except Exception as e:
-        st.error(f"⚠️ Error occurred while predicting: {e}")
-
-# ------------------ FOOTER ------------------
-st.markdown("---")
-st.markdown("<p style='text-align:center;'>Made with ❤️ by Munashira Farheen | Credit Score Predictor Project</p>", unsafe_allow_html=True)
+def get_tip(feature, value):
+    tips = {
+        "Payment_History": "Aim for a consistent payment history close to 100%.",
+        "Credit_Utilization": "Try to keep credit utilization below 30%.",
+        "Credit_Age": "Avoid closing old accounts to improve average credit age.",
+        "Number_of_Accounts": "Avoid opening too many new accounts quickly.",
+        "Hard_Inquiries": "Limit the number of credit inquiries over a short period.",
+        "Debt_to_Income_Ratio": "Reduce debt or increase income to lower this ratio."
+    }
+    return tips.get(feature, "General financial discipline can help.")
+synthetic_cibil_scores.csv
